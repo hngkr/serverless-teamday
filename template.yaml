@@ -371,13 +371,10 @@ Resources:
 
   VotesEventBus:
     Type: AWS::Events::EventBus
-    Properties:
-      Name: "VotesEventBus"
 
   VotesEventBusArchive:
     Type: 'AWS::Events::Archive'
     Properties:
-      ArchiveName: VotesEventBusArchive
       Description: Archive for voting messages
       RetentionDays: 10
       SourceArn: !GetAtt VotesEventBus.Arn
