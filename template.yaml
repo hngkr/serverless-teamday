@@ -1,0 +1,512 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  serverless-teamday
+
+  Sample SAM Template for serverless-teamday
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 20
+    MemorySize: 256
+    Environment:
+      Variables:
+        LOG_LEVEL: DEBUG
+
+Resources:
+#  HelloWorldFunction:
+#    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+#    Properties:
+#      CodeUri: HelloWorldFunction
+#      Handler: helloworld.App::handleRequest
+#      Runtime: java11
+#      Architectures:
+#        - arm64
+#      MemorySize: 512
+#      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+#        Variables:
+#          PARAM1: VALUE
+#          JAVA_TOOL_OPTIONS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 # More info about tiered compilation https://aws.amazon.com/blogs/compute/optimizing-aws-lambda-function-performance-for-java/
+#      Events:
+#        HelloWorld:
+#          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+#          Properties:
+#            Path: /hello
+#            Method: get
+
+  AwsLambdaPowertoolsPythonLayer:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:eu-west-1:057560766410:applications/aws-lambda-powertools-python-layer-arm64
+        SemanticVersion: 2.14.1 # change to latest semantic version available in SAR
+
+  ApiStartFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_api.start_lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Events:
+        ManagementApi:
+          Type: Api
+          Properties:
+            Path: /start
+            Method: get
+
+  ApiStopFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_api.stop_lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Events:
+        ManagementApi:
+          Type: Api
+          Properties:
+            Path: /stop
+            Method: get
+
+  ReceiveVoteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_receivevote.lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Policies:
+        - AWSLambdaExecute
+        - KinesisCrudPolicy:
+            StreamName:
+              !Ref VotesInputStream1
+      Environment:
+        Variables:
+          VOTES_INPUTSTREAM_ARN: !Ref VotesInputStream1
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  StoreVotesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_storevotes.lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Policies:
+        - AWSLambdaExecute
+        - KinesisStreamReadPolicy:
+            StreamName:
+              !Ref VotesInputStream1
+        - DynamoDBWritePolicy:
+            TableName:
+              !Ref VotesTable5
+        - Statement:
+            - Effect: Allow
+              Resource: !GetAtt VotesEventBus.Arn
+              Action:
+                - events:PutEvents
+      Environment:
+        Variables:
+          VOTES_TABLE_NAME: !Ref VotesTable5
+          VOTES_EVENTBUS_NAME: !Ref VotesEventBus
+      Events:
+        Stream:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt VotesInputStream1.Arn
+            BatchSize: 500
+            StartingPosition: LATEST
+
+  WriteVoteSummaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_summary.lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Policies:
+        - AWSLambdaDynamoDBExecutionRole
+        - DynamoDBWritePolicy:
+            TableName:
+              !Ref SummaryTable
+      Environment:
+        Variables:
+          VOTES_EVENTBUS_NAME: !Ref VotesEventBus
+          SUMMARY_TABLE_NAME: !Ref SummaryTable
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt VotesTable5.StreamArn
+            BatchSize: 1000
+            StartingPosition: LATEST
+
+  ProcessMessageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: voter_api/
+      Handler: lambda_eventbridge.process_message_lambda_handler
+      Runtime: python3.10
+      Layers:
+        - !GetAtt AwsLambdaPowertoolsPythonLayer.Outputs.LayerVersionArn
+      Architectures:
+        - arm64
+      Policies:
+        - AWSLambdaExecute
+
+  ProcessMessageEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "ProcessMessageRule"
+      EventBusName: !Ref VotesEventBus
+      EventPattern:
+        detail-type:
+          - voteMessageReceived
+      State: "ENABLED"
+      Targets:
+        -
+          Id: "ProcessMessageFunctionTarget"
+          Arn: !GetAtt ProcessMessageFunction.Arn
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessMessageFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt ProcessMessageEventRule.Arn
+
+  30mCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Comment: Cache for 30m
+        Name: !Sub '${AWS::StackName}30mCachePolicy'
+        DefaultTTL: 1800
+        MaxTTL: 1800
+        MinTTL: 1800
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingBrotli: false
+          EnableAcceptEncodingGzip: false
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - x-forwarded-for
+          QueryStringsConfig:
+            QueryStringBehavior: whitelist
+            QueryStrings:
+              - allowed_query_string_param
+
+  CloudfrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        IPV6Enabled: true
+        HttpVersion: http2
+        WebACLId: !GetAtt CloudfrontWebACL.Arn
+        PriceClass: PriceClass_100
+#        Logging:
+#          Bucket: !Sub
+#            - '${LoggingBucketName}.s3.amazonaws.com'
+#            - LoggingBucketName: !Ref LoggingBucket
+#          Prefix: cloudfront/
+#          IncludeCookies: 'false'
+        Origins:
+          - Id: VoteLambdaFunctionUrl
+            DomainName: !Select [2, !Split ["/", !GetAtt ReceiveVoteFunctionUrl.FunctionUrl]]
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+          - Id: StaticBucket
+            DomainName: !GetAtt StaticBucket.DomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
+        Enabled: true
+        CacheBehaviors:
+          - PathPattern: vote/*
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            TargetOriginId: VoteLambdaFunctionUrl
+            CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6'
+            ViewerProtocolPolicy: redirect-to-https
+            SmoothStreaming: 'false'
+            Compress: 'true'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          TargetOriginId: StaticBucket
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: !Ref 30mCachePolicy
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: CloudFront OAI
+
+  CloudfrontWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: CloudfrontWebACL
+      DefaultAction:
+        Allow: { }
+      Rules:
+        - Name: "CloudfrontBlockIpRule"
+          Priority: 0
+          Statement:
+            IPSetReferenceStatement:
+              Arn: !GetAtt CloudfrontBlockIPSet.Arn
+          Action:
+            Block: { }
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: "CloudfrontBlockIpRule"
+      Scope: CLOUDFRONT
+      CustomResponseBodies:
+        Unauthorized:
+          ContentType: TEXT_PLAIN
+          Content: Unauthorized !
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: "CloudfrontDefaultAction"
+
+  CloudfrontBlockIPSet:
+    Type: 'AWS::WAFv2::IPSet'
+    Properties:
+      Name: CloudfrontFirewallIPSet
+      Scope: CLOUDFRONT
+      IPAddressVersion: IPV4
+      Addresses: [ ]
+
+  VotesInputStream1:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 5
+
+  VotesTable5:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  SummaryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  StaticBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+        LogFilePrefix: static-bucket-logs/
+
+  StaticBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Sub
+              - "${BucketArn}/*"
+              - BucketArn: !GetAtt StaticBucket.Arn
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+
+  VotesEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: "VotesEventBus"
+
+  VotesEventBusArchive:
+    Type: 'AWS::Events::Archive'
+    Properties:
+      ArchiveName: VotesEventBusArchive
+      Description: Archive for voting messages
+      RetentionDays: 10
+      SourceArn: !GetAtt VotesEventBus.Arn
+
+  LoggingBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref LoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: CloudfrontLoggingAccess
+            Effect: 'Allow'
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - 's3:GetBucketAcl'
+              - 's3:PutBucketAcl'
+            Resource: !Sub
+              - 'arn:aws:s3:::${LoggingBucket}'
+              - LoggingBucket: !Ref LoggingBucket
+          - Sid: S3LoggingAccess
+            Action:
+              - 's3:PutObject'
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Resource: !Sub
+              - 'arn:aws:s3:::${LoggingBucket}/*'
+              - LoggingBucket: !Ref LoggingBucket
+            Condition:
+              ArnLike:
+                'aws:SourceArn': !GetAtt StaticBucket.Arn
+              StringEquals:
+                'aws:SourceAccount': !Sub '${AWS::AccountId}'
+
+  S3AccessLogsTable:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: default
+      WorkGroup: !Ref LoggingWorkgroup
+      Description: Creates S3 Access Log Table
+      Name: Create Table - S3 Access Logs
+      QueryString: !Sub
+        - |-
+          CREATE EXTERNAL TABLE IF NOT EXISTS s3_access_logs(
+                BucketOwner STRING,
+                Bucket STRING,
+                RequestDateTime STRING,
+                RemoteIP STRING,
+                Requester STRING,
+                RequestID STRING,
+                Operation STRING,
+                Key STRING,
+                RequestURI_operation STRING,
+                RequestURI_key STRING,
+                RequestURI_httpProtoversion STRING,
+                HTTPstatus STRING,
+                ErrorCode STRING,
+                BytesSent BIGINT,
+                ObjectSize BIGINT,
+                TotalTime STRING,
+                TurnAroundTime STRING,
+                Referrer STRING,
+                UserAgent STRING,
+                VersionId STRING,
+                HostId STRING,
+                SigV STRING,
+                CipherSuite STRING,
+                AuthType STRING,
+                EndPoint STRING,
+                TLSVersion STRING
+                )
+                ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+                WITH SERDEPROPERTIES (
+                  'serialization.format' = '1', 'input.regex' = '([^ ]*) ([^ ]*) \\[(.*?)\\] ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) \\\"([^ ]*) ([^ ]*) (- |[^ ]*)\\\" (-|[0-9]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) (\"[^\"]*\") ([^ ]*)(?: ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*))?.*$' )
+                LOCATION 's3://${S3AccessLogsPath}/static-bucket-logs'
+        - S3AccessLogsPath: !Ref LoggingBucket
+
+  LoggingWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: LoggingWorkgroup
+      Description: Workgroup for querying AWS logs
+      State: ENABLED
+      WorkGroupConfiguration:
+        BytesScannedCutoffPerQuery: 200000000
+        EnforceWorkGroupConfiguration: false
+        PublishCloudWatchMetricsEnabled: false
+        RequesterPaysEnabled: true
+        ResultConfiguration:
+          OutputLocation: !Sub
+            - "s3://${BucketName}/queryresults/"
+            - BucketName: !Ref LoggingBucket
+
+Outputs:
+  ReceiveVoteFunctionEndpoint:
+    Description: Lambda Function URL Endpoint.
+    Value: !GetAtt ReceiveVoteFunctionUrl.FunctionUrl
+
+  ReceiveVoteFunctionDomain:
+    Description: Lambda Function URL domain.
+    Value: !Select [2, !Split ["/", !GetAtt ReceiveVoteFunctionUrl.FunctionUrl]]
+
+  DistributionDomainName:
+    Description: "Distribution domain name"
+    Value: !GetAtt CloudfrontDistribution.DomainName
+    Export:
+      Name: DistributionDomainName
+
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  ServerlessRestApiStart:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/start/"
+
+  ServerlessRestApiStop:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/stop/"
+
+#  HelloWorldFunction:
+#    Description: "Hello World Lambda Function ARN"
+#    Value: !GetAtt HelloWorldFunction.Arn
+
+#  HelloWorldFunctionIamRole:
+#    Description: "Implicit IAM Role created for Hello World function"
+#    Value: !GetAtt HelloWorldFunctionRole.Arn
+
+  StaticBucketCopyPath:
+    Description: "Copy path for the static asset bucket"
+    Value: !Sub 's3://${StaticBucket}/'

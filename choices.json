@@ -1,0 +1,40 @@
+{
+  "choices": [
+    {
+      "name": "Cherry Blossom Avenue",
+      "id": "52ac4022-d9a3-4155-8a15-def085e29b48"
+    },
+    {
+      "name": "Velvet Thunder",
+      "id": "a3f19b46-6ade-4d13-b7f4-32b8c43a3f1f"
+    },
+    {
+      "name": "Tokyo Groove Machine",
+      "id": "124832a0-c546-49b3-87e0-c17589759fd1"
+    },
+    {
+      "name": "S@kura Serenade",
+      "id": "306906bd-d800-4ea6-b539-d53c2ebde67c"
+    },
+    {
+      "name": "Chrome Kids",
+      "id": "57d1fe39-1b71-4a04-8de3-d6dc9fc9c7a2"
+    },
+    {
+      "name": "Glamour K!lls",
+      "id": "e2fde1f2-da87-4678-9693-f6eade8f350d"
+    },
+    {
+      "name": "Fury of the Tempest",
+      "id": "e9dfbe32-6b52-4e3a-8dac-1ba5a39cfda7"
+    },
+    {
+      "name": "Acid Dolls",
+      "id": "5018b7bf-1103-4ffa-b34e-e136d5b9a8c9"
+    },
+    {
+      "name": "Sugar Rush Express",
+      "id": "9b3181ae-a2d2-4d9b-80a3-4a1049970ca5"
+    }
+  ]
+}
