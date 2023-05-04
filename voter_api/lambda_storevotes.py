@@ -38,7 +38,7 @@ def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, A
         if 'message' in data:
             deliver_vote_with_message_to_eventbridge(data)
 
-        update_and_increase_item(votes_table, {'id': f'{data["phoneNo"]}#{data["vote"]}'}, {})
+        update_and_increase_item(votes_table, {'id': f'{data["phoneNo"]}#{data["vote"]}'}, data)
 
     return {'statusCode': HTTPStatus.OK,
             'headers': {'Content-Type': 'application/json'},
