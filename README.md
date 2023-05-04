@@ -1,6 +1,8 @@
 # serverless-teamday
 
-## Requirements
+## Requirements på Windows/Powershell
+
+Fair warning: python310-pakken udløser 10-12 "ja tak"-dialoger
 
 `choco install awscli awssamcli python310`
 
