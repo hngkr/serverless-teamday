@@ -277,7 +277,7 @@ Resources:
   CloudfrontWebACL:
     Type: AWS::WAFv2::WebACL
     Properties:
-      Name: CloudfrontWebACL
+      Name: !Sub '${AWS::StackName}CloudfrontWebACL'
       DefaultAction:
         Allow: { }
       Rules:
@@ -305,7 +305,7 @@ Resources:
   CloudfrontBlockIPSet:
     Type: 'AWS::WAFv2::IPSet'
     Properties:
-      Name: CloudfrontFirewallIPSet
+      Name: !Sub '${AWS::StackName}WAFIPSet'
       Scope: CLOUDFRONT
       IPAddressVersion: IPV4
       Addresses: [ ]
@@ -377,7 +377,7 @@ Resources:
   VotesEventBusArchive:
     Type: 'AWS::Events::Archive'
     Properties:
-      Name: !Sub '${AWS::StackName}EventBusArchive'
+      ArchiveName: !Sub '${AWS::StackName}EventBusArchive'
       Description: Archive for voting messages
       RetentionDays: 10
       SourceArn: !GetAtt VotesEventBus.Arn
@@ -460,7 +460,7 @@ Resources:
   LoggingWorkgroup:
     Type: AWS::Athena::WorkGroup
     Properties:
-      Name: LoggingWorkgroup
+      Name: !Sub '${AWS::StackName}LoggingWorkgroup'
       Description: Workgroup for querying AWS logs
       State: ENABLED
       WorkGroupConfiguration:
